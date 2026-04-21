@@ -54,6 +54,7 @@ ai-sync/
 - `.ai/agents` -> `.cursor/agents`
 - `.ai/commands` -> `.cursor/commands`
 - `.ai/mcp/mcp.json` -> `.cursor/mcp.json`
+- if `patrol` server uses `command: "ai-sync:patrol-launcher"`, generates `.cursor/run-patrol`
 
 ### Copilot
 
@@ -64,6 +65,7 @@ ai-sync/
 - `.ai/prompts` -> `.github/ai/prompts`
 - `.ai/mcp/mcp.json` -> `.vscode/mcp.json` (normalized to `servers`)
 - `.ai/mcp/mcp.json` -> `.cursor/mcp.json` (legacy mirror)
+- if `patrol` server uses `command: "ai-sync:patrol-launcher"`, generates `.vscode/run-patrol`
 - generated output -> `.github/copilot-instructions.md`
 
 ### Claude Code
@@ -73,7 +75,8 @@ ai-sync/
 - `.ai/rules` -> `.claude/ai/rules`
 - `.ai/commands` -> `.claude/commands`
 - `.ai/prompts` -> `.claude/ai/prompts`
-- `.ai/mcp/mcp.json` -> `.claude/mcp.json`
+- `.ai/mcp/mcp.json` -> `.mcp.json` (project root, `mcpServers`)
+- if `patrol` server uses `command: "ai-sync:patrol-launcher"`, generates `.claude/run-patrol`
 - generated output -> `CLAUDE.md`
 
 ### Shared
@@ -108,4 +111,5 @@ go install ./cmd/ai
 ## Notes
 
 - This folder intentionally contains **no project-specific rules, prompts, or private instructions**.
+- This folder intentionally contains **no project-specific MCP servers or local credentials**.
 - It contains only generic sync logic and public schema documentation.
