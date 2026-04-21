@@ -1,4 +1,4 @@
-# ai-sync (public package skeleton)
+# ai-sync
 
 Minimal Go CLI to sync a canonical `.ai` source into IDE-specific outputs for Cursor, GitHub Copilot, and Claude Code.
 
