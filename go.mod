@@ -1,3 +1,3 @@
-module github.com/example/ai-sync
+module github.com/mateusz-pietras/ai-sync
 
 go 1.23
