@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	beginGeneratedRules = "<!-- AI_SYNC:BEGIN_GENERATED_RULES -->"
-	endGeneratedRules   = "<!-- AI_SYNC:END_GENERATED_RULES -->"
-	patrolLauncherRef   = "ai-sync:patrol-launcher"
+	beginGeneratedRules   = "<!-- AI_SYNC:BEGIN_GENERATED_RULES -->"
+	endGeneratedRules     = "<!-- AI_SYNC:END_GENERATED_RULES -->"
+	launcherCommandPrefix = "ai-sync:launcher:"
 )
 
 type syncOptions struct {
@@ -73,8 +73,8 @@ func parseSyncFlags(args []string) (syncOptions, error) {
 	flags.StringVar(&opts.target, "t", ".", "Shorthand for --target")
 	flags.StringVar(&opts.ide, "ide", "all", "Target setup to generate: cursor|copilot|claude|all")
 	flags.StringVar(&opts.ide, "i", "all", "Shorthand for --ide")
-	flags.BoolVar(&opts.force, "force", true, "Overwrite managed files")
-	flags.BoolVar(&opts.force, "f", true, "Shorthand for --force")
+	flags.BoolVar(&opts.force, "force", false, "Overwrite managed files")
+	flags.BoolVar(&opts.force, "f", false, "Shorthand for --force")
 	flags.BoolVar(&opts.dryRun, "dry-run", false, "Preview changes only")
 	flags.BoolVar(&opts.dryRun, "d", false, "Shorthand for --dry-run")
 	if err := flags.Parse(args); err != nil {
@@ -156,17 +156,15 @@ func syncCursor(sourceAI, target string, force, dryRun bool, count *counters) er
 		if err != nil {
 			return err
 		}
-		cursorContent, hasPatrol, err := buildProviderMCP(baseContent, "cursor")
+		cursorContent, launcherTools, err := buildProviderMCP(baseContent, "cursor")
 		if err != nil {
 			return err
 		}
 		if err := writeFile(filepath.Join(target, ".cursor", "mcp.json"), cursorContent, force, dryRun, count); err != nil {
 			return err
 		}
-		if hasPatrol {
-			if err := writePatrolLauncher(target, "cursor", force, dryRun, count); err != nil {
-				return err
-			}
+		if err := writeLauncherTools(sourceAI, target, "cursor", launcherTools, force, dryRun, count); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -194,7 +192,7 @@ func syncCopilot(sourceAI, target string, force, dryRun bool, count *counters) e
 		if err != nil {
 			return err
 		}
-		copilotContent, hasPatrol, err := buildProviderMCP(baseContent, "copilot")
+		copilotContent, copilotLaunchers, err := buildProviderMCP(baseContent, "copilot")
 		if err != nil {
 			return err
 		}
@@ -202,22 +200,8 @@ func syncCopilot(sourceAI, target string, force, dryRun bool, count *counters) e
 			return err
 		}
 
-		cursorMirror, hasPatrolCursor, err := buildProviderMCP(baseContent, "cursor")
-		if err != nil {
+		if err := writeLauncherTools(sourceAI, target, "copilot", copilotLaunchers, force, dryRun, count); err != nil {
 			return err
-		}
-		if err := writeFile(filepath.Join(target, ".cursor", "mcp.json"), cursorMirror, force, dryRun, count); err != nil {
-			return err
-		}
-		if hasPatrol {
-			if err := writePatrolLauncher(target, "copilot", force, dryRun, count); err != nil {
-				return err
-			}
-		}
-		if hasPatrolCursor {
-			if err := writePatrolLauncher(target, "cursor", force, dryRun, count); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -246,17 +230,15 @@ func syncClaude(sourceAI, target string, force, dryRun bool, count *counters) er
 		if err != nil {
 			return err
 		}
-		claudeContent, hasPatrol, err := buildProviderMCP(baseContent, "claude")
+		claudeContent, launcherTools, err := buildProviderMCP(baseContent, "claude")
 		if err != nil {
 			return err
 		}
 		if err := writeFile(filepath.Join(target, ".mcp.json"), claudeContent, force, dryRun, count); err != nil {
 			return err
 		}
-		if hasPatrol {
-			if err := writePatrolLauncher(target, "claude", force, dryRun, count); err != nil {
-				return err
-			}
+		if err := writeLauncherTools(sourceAI, target, "claude", launcherTools, force, dryRun, count); err != nil {
+			return err
 		}
 	}
 
@@ -342,7 +324,7 @@ func buildGeneratedDictionary(sourceAI string) (string, error) {
 		lines = append(lines, "- Cursor MCP file: `.cursor/mcp.json` (`mcpServers`)")
 		lines = append(lines, "- Copilot MCP file: `.vscode/mcp.json` (`servers`)")
 		lines = append(lines, "- Claude Code MCP file: `.mcp.json` (`mcpServers`)")
-		lines = append(lines, "- Patrol launcher scripts are generated per IDE when `patrol` server uses `ai-sync:patrol-launcher`.")
+		lines = append(lines, "- Tool launcher scripts are generated when server command uses `ai-sync:launcher:<tool>` and template exists in `.ai/templates/mcp-tools/<tool>.sh`.")
 		names, err := listMCPServerNames(mcpPath)
 		if err == nil && len(names) > 0 {
 			lines = append(lines, "- Configured servers:")
@@ -467,7 +449,13 @@ func copyTree(src, dst string, force, dryRun bool, count *counters) error {
 			if dryRun {
 				return nil
 			}
-			return os.MkdirAll(targetPath, 0o755)
+			if err := os.MkdirAll(targetPath, 0o755); err != nil {
+				if count != nil {
+					count.skipped++
+				}
+				return nil
+			}
+			return nil
 		}
 		if shouldSkipFile(path) {
 			return nil
@@ -492,9 +480,26 @@ func shouldSkipFile(path string) bool {
 func writeFile(path string, content []byte, force, dryRun bool, count *counters) error {
 	exists := pathExists(path)
 	if exists {
+		info, err := os.Stat(path)
+		if err != nil {
+			if count != nil {
+				count.skipped++
+			}
+			return nil
+		}
+		if info.IsDir() {
+			if count != nil {
+				count.skipped++
+			}
+			return nil
+		}
+
 		existing, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			if count != nil {
+				count.skipped++
+			}
+			return nil
 		}
 		if bytes.Equal(existing, content) {
 			if count != nil {
@@ -522,10 +527,16 @@ func writeFile(path string, content []byte, force, dryRun bool, count *counters)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+		if count != nil {
+			count.skipped++
+		}
+		return nil
 	}
 	if err := os.WriteFile(path, content, 0o644); err != nil {
-		return err
+		if count != nil {
+			count.skipped++
+		}
+		return nil
 	}
 	if count != nil {
 		if exists {
@@ -608,10 +619,10 @@ func extractRuleDescription(path string) string {
 	return "No description available."
 }
 
-func buildProviderMCP(baseRaw []byte, provider string) ([]byte, bool, error) {
+func buildProviderMCP(baseRaw []byte, provider string) ([]byte, []string, error) {
 	var doc map[string]any
 	if err := json.Unmarshal(baseRaw, &doc); err != nil {
-		return nil, false, err
+		return nil, nil, err
 	}
 
 	baseServers := map[string]any{}
@@ -626,7 +637,8 @@ func buildProviderMCP(baseRaw []byte, provider string) ([]byte, bool, error) {
 	}
 
 	outServers := map[string]any{}
-	hasPatrol := false
+	launcherTools := make([]string, 0)
+	launcherSeen := map[string]struct{}{}
 	for name, raw := range baseServers {
 		server, ok := raw.(map[string]any)
 		if !ok {
@@ -634,9 +646,12 @@ func buildProviderMCP(baseRaw []byte, provider string) ([]byte, bool, error) {
 		}
 
 		serverCopy := cloneMap(server)
-		if strings.EqualFold(name, "patrol") {
-			hasPatrol = true
-			preparePatrolServer(serverCopy, provider)
+		if toolName, ok := parseLauncherToolName(serverCopy); ok {
+			serverCopy["command"] = toolLauncherCommand(provider, toolName)
+			if _, exists := launcherSeen[toolName]; !exists {
+				launcherSeen[toolName] = struct{}{}
+				launcherTools = append(launcherTools, toolName)
+			}
 		}
 		if provider == "copilot" {
 			normalizeServerForCopilot(serverCopy)
@@ -654,9 +669,10 @@ func buildProviderMCP(baseRaw []byte, provider string) ([]byte, bool, error) {
 
 	formatted, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return nil, false, err
+		return nil, nil, err
 	}
-	return append(formatted, '\n'), hasPatrol, nil
+	sort.Strings(launcherTools)
+	return append(formatted, '\n'), launcherTools, nil
 }
 
 func cloneMap(in map[string]any) map[string]any {
@@ -667,26 +683,18 @@ func cloneMap(in map[string]any) map[string]any {
 	return out
 }
 
-func preparePatrolServer(server map[string]any, provider string) {
+func parseLauncherToolName(server map[string]any) (string, bool) {
 	command, _ := server["command"].(string)
-	if command == "" || command == patrolLauncherRef {
-		server["command"] = patrolLauncherPath(provider)
+	command = strings.TrimSpace(command)
+	if !strings.HasPrefix(command, launcherCommandPrefix) {
+		return "", false
 	}
 
-	env, ok := server["env"].(map[string]any)
-	if !ok {
-		env = map[string]any{}
+	rawTool := strings.TrimSpace(strings.TrimPrefix(command, launcherCommandPrefix))
+	if rawTool == "" {
+		return "", false
 	}
-	if _, ok := env["PROJECT_ROOT"]; !ok {
-		env["PROJECT_ROOT"] = "."
-	}
-	if _, ok := env["PATROL_FLAGS"]; !ok {
-		env["PATROL_FLAGS"] = ""
-	}
-	if _, ok := env["SHOW_TERMINAL"]; !ok {
-		env["SHOW_TERMINAL"] = "false"
-	}
-	server["env"] = env
+	return sanitizeToolName(rawTool), true
 }
 
 func normalizeServerForCopilot(server map[string]any) {
@@ -706,56 +714,83 @@ func normalizeServerForCopilot(server map[string]any) {
 	delete(server, "headers")
 }
 
-func patrolLauncherPath(provider string) string {
+func toolLauncherCommand(provider, toolName string) string {
 	switch provider {
 	case "cursor":
-		return "./.cursor/run-patrol"
+		return fmt.Sprintf("./.cursor/run-%s", toolName)
 	case "copilot":
-		return "./.vscode/run-patrol"
+		return fmt.Sprintf("./.vscode/run-%s", toolName)
 	case "claude":
-		return "./.claude/run-patrol"
+		return fmt.Sprintf("./.claude/run-%s", toolName)
 	default:
-		return "./run-patrol"
+		return fmt.Sprintf("./run-%s", toolName)
 	}
 }
 
-func patrolLauncherOutputPath(target, provider string) string {
+func toolLauncherOutputPath(target, provider, toolName string) string {
 	switch provider {
 	case "cursor":
-		return filepath.Join(target, ".cursor", "run-patrol")
+		return filepath.Join(target, ".cursor", fmt.Sprintf("run-%s", toolName))
 	case "copilot":
-		return filepath.Join(target, ".vscode", "run-patrol")
+		return filepath.Join(target, ".vscode", fmt.Sprintf("run-%s", toolName))
 	case "claude":
-		return filepath.Join(target, ".claude", "run-patrol")
+		return filepath.Join(target, ".claude", fmt.Sprintf("run-%s", toolName))
 	default:
-		return filepath.Join(target, "run-patrol")
+		return filepath.Join(target, fmt.Sprintf("run-%s", toolName))
 	}
 }
 
-func writePatrolLauncher(target, provider string, force, dryRun bool, count *counters) error {
-	launcher := strings.Join([]string{
-		"#!/usr/bin/env sh",
-		"set -e",
-		"cd \"${PROJECT_ROOT:-.}\"",
-		"export PROJECT_ROOT=$PWD",
-		"if command -v fvm >/dev/null 2>&1; then",
-		"  export PATROL_FLUTTER_COMMAND=\"${PATROL_FLUTTER_COMMAND:-fvm flutter}\"",
-		"  exec fvm dart run patrol_mcp",
-		"else",
-		"  export PATROL_FLUTTER_COMMAND=\"${PATROL_FLUTTER_COMMAND:-flutter}\"",
-		"  exec dart run patrol_mcp",
-		"fi",
-		"",
-	}, "\n")
+func writeLauncherTools(sourceAI, target, provider string, toolNames []string, force, dryRun bool, count *counters) error {
+	for _, toolName := range toolNames {
+		templatePath := filepath.Join(sourceAI, "templates", "mcp-tools", toolName+".sh")
+		if !pathExists(templatePath) {
+			if count != nil {
+				count.skipped++
+			}
+			continue
+		}
 
-	path := patrolLauncherOutputPath(target, provider)
-	if err := writeFile(path, []byte(launcher), force, dryRun, count); err != nil {
-		return err
+		scriptContent, err := os.ReadFile(templatePath)
+		if err != nil {
+			if count != nil {
+				count.skipped++
+			}
+			continue
+		}
+
+		outputPath := toolLauncherOutputPath(target, provider, toolName)
+		if err := writeFile(outputPath, scriptContent, force, dryRun, count); err != nil {
+			return err
+		}
+		if dryRun {
+			continue
+		}
+		if err := os.Chmod(outputPath, 0o755); err != nil {
+			if count != nil {
+				count.skipped++
+			}
+		}
 	}
-	if dryRun {
-		return nil
+	return nil
+}
+
+func sanitizeToolName(raw string) string {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return "tool"
 	}
-	return os.Chmod(path, 0o755)
+
+	var b strings.Builder
+	for _, r := range raw {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		}
+	}
+	clean := strings.Trim(b.String(), "-_")
+	if clean == "" {
+		return "tool"
+	}
+	return clean
 }
 
 func listMCPServerNames(path string) ([]string, error) {

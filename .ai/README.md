@@ -13,6 +13,7 @@ Expected layout:
 - `templates/copilot/copilot-instructions.md`
 - `templates/claude/CLAUDE.md`
 - `templates/gitignore/.gitignore`
+- `templates/mcp-tools/<tool>.sh`
 
 Put your own project-specific content here.
 
@@ -20,4 +21,5 @@ MCP notes:
 
 - `mcp/mcp.json` is the single base source.
 - `ai sync` generates provider-specific files (`.cursor/mcp.json`, `.vscode/mcp.json`, `.mcp.json`).
-- Optional Patrol integration: define a `patrol` server with `command: "ai-sync:patrol-launcher"`.
+- For reusable launcher scripts, set server `command` to `ai-sync:launcher:<tool>`.
+- Provide matching template at `.ai/templates/mcp-tools/<tool>.sh`.

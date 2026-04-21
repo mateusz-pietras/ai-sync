@@ -54,7 +54,7 @@ ai-sync/
 - `.ai/agents` -> `.cursor/agents`
 - `.ai/commands` -> `.cursor/commands`
 - `.ai/mcp/mcp.json` -> `.cursor/mcp.json`
-- if `patrol` server uses `command: "ai-sync:patrol-launcher"`, generates `.cursor/run-patrol`
+- tool launchers generated from `.ai/templates/mcp-tools/*.sh` when command is `ai-sync:launcher:<tool>`
 
 ### Copilot
 
@@ -64,8 +64,7 @@ ai-sync/
 - `.ai/commands` -> `.github/ai/commands`
 - `.ai/prompts` -> `.github/ai/prompts`
 - `.ai/mcp/mcp.json` -> `.vscode/mcp.json` (normalized to `servers`)
-- `.ai/mcp/mcp.json` -> `.cursor/mcp.json` (legacy mirror)
-- if `patrol` server uses `command: "ai-sync:patrol-launcher"`, generates `.vscode/run-patrol`
+- tool launchers generated from `.ai/templates/mcp-tools/*.sh` when command is `ai-sync:launcher:<tool>`
 - generated output -> `.github/copilot-instructions.md`
 
 ### Claude Code
@@ -76,7 +75,7 @@ ai-sync/
 - `.ai/commands` -> `.claude/commands`
 - `.ai/prompts` -> `.claude/ai/prompts`
 - `.ai/mcp/mcp.json` -> `.mcp.json` (project root, `mcpServers`)
-- if `patrol` server uses `command: "ai-sync:patrol-launcher"`, generates `.claude/run-patrol`
+- tool launchers generated from `.ai/templates/mcp-tools/*.sh` when command is `ai-sync:launcher:<tool>`
 - generated output -> `CLAUDE.md`
 
 ### Shared
@@ -95,11 +94,28 @@ Use marker comments in `.ai/templates/copilot/copilot-instructions.md`:
 Only the content between markers is regenerated.
 The same markers are used in both Copilot and Claude templates.
 
+## MCP launcher catalog (generic)
+
+To use reusable MCP launcher scripts:
+
+1. In `.ai/mcp/mcp.json`, set server command to:
+   - `ai-sync:launcher:<tool>`
+2. Add template script:
+   - `.ai/templates/mcp-tools/<tool>.sh`
+
+`ai sync` generates executable provider-specific launchers:
+- `.cursor/run-<tool>`
+- `.vscode/run-<tool>`
+- `.claude/run-<tool>`
+
 ## CLI usage
 
 ```bash
 ai sync --source <repo-with-ai> --target <destination-repo> --ide cursor|copilot|claude|all [--force] [--dry-run]
 ```
+
+Default behavior is safe sync: existing conflicting files are skipped.  
+Pass `-f` / `--force` to overwrite conflicting files.
 
 ## Build/install
 
